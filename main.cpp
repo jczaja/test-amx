@@ -62,8 +62,13 @@ int main(int argc, char **argv) {
  // configure tiles 
  _tile_loadconfig(&cfg);
 
+//  _tile_loadd (tmm0, const void * base, int stride);
 
-  // TODO: config palette and start row
+  // Each tile is 64 bytes * 16 rows = 1024 bytes
+  int8_t tile_buf[64*16*sizeof(int8_t)] = {2};
+
+  _tile_stored(0, tile_buf, /*stride*/ 1);
+
 
 //LDTILECFG [rax]
 //// assume some outer loops driving the cache tiling (not shown)
