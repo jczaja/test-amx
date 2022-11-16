@@ -43,8 +43,8 @@
          
 #pragma pack(1)
 struct amx_memory_layout {
-  unsigned char palette;
-  unsigned char start_row;
+  unsigned char palette = 1;  // Leaving those value undefined makes Segmentation fault
+  unsigned char start_row = 0;
   unsigned char reserved[14] = {0};
   unsigned short tiles_bytes_per_row[8] = {64}; // Max availale ie.g. 64 bytes per tile's row
   unsigned char reserved2[16] = {0};
