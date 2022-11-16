@@ -66,8 +66,10 @@ int main(int argc, char **argv) {
 
   // Each tile is 64 bytes * 16 rows = 1024 bytes
   int8_t tile_buf[64*16*sizeof(int8_t)] = {2};
+  //_tile1024i tmm0;
+  _tile_zero(2);
 
-  _tile_stored(0, tile_buf, /*stride*/ 1);
+//  _tile_stored(0, tile_buf, /*stride*/ 1);
 
 
 //LDTILECFG [rax]
