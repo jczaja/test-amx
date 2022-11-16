@@ -23,13 +23,73 @@
 #include <vector>
 #include <immintrin.h> // <-- to have AMX intrinsics
 
+// Struct to configure memory layout
+//Byte(s)  Field Name                   Description
+//0        palette                      Palette selects the supported configuration of the tiles that will be used.
+//1        start_row                    start_row is used for storing the restart values for interrupted operations.
+//2-15     reserved, must be zero       
+//16-17    tile0.colsb                  Tile 0 bytes per row.
+//18-19    tile1.colsb                  Tile 1 bytes per row.
+//20-21    tile2.colsb                  Tile 2 bytes per row.
+//...      (sequence continues)         
+//30-31    tile7.colsb                  Tile 7 bytes per row.
+//32-47    reserved, must be zero       
+//48       tile0.rows                   Tile 0 rows.
+//49       tile1.rows                   Tile 1 rows.
+//50       tile2.rows                   Tile 2 rows.
+//...      (sequence continues)
+//55       tile7.rows                    Tile 7 rows.
+//56-63    reserved, must be zero
+         
+#pragma pack(1)
+struct amx_memory_layout {
+  unsigned char palette;
+  unsigned char start_row;
+  unsigned char reserved[14] = {0};
+  unsigned short tiles_bytes_per_row[8] = {64}; // Max availale ie.g. 64 bytes per tile's row
+  unsigned char reserved2[16] = {0};
+  unsigned char tiles_rows[8] = {16}; // Max availale ie.g. 16 rows per tile
+  unsigned char reserved3[8] = {0};
+};
+#pragma pack(0)
+
 int main(int argc, char **argv) {
 
   printf("Hello AMX intrinsics!!\n");
 
+ // 1. make a configuration
+ amx_memory_layout cfg;
+ // configure tiles 
+ _tile_loadconfig(&cfg);
 
-  // 1. make a configuration
-  _tile_loadconfig(/*const void * mem_addr*/nullptr);
+
+  // TODO: config palette and start row
+
+//LDTILECFG [rax]
+//// assume some outer loops driving the cache tiling (not shown)
+//{
+//TILELOADD tmm0, [rsi+rdi] // srcdst, RSI points to C, RDI is strided value
+//TILELOADD tmm1, [rsi+rdi+N] // second tile of C, unrolling in SIMD dimension N
+//MOV r14, 0
+//LOOP:
+//TILELOADD tmm2, [r8+r9]
+// // src2 is strided load of A, reused for 2 TMUL instr.
+//TILELOADD tmm3, [r10+r11] // src1 is strided load of B
+//TDPBUSD tmm0, tmm2, tmm3 // update left tile of C
+//TILELOADD tmm3, [r10+r11+N] // src1 loaded with B from next rightmost tile
+//TDPBUSD tmm1, tmm2, tmm3 // update right tile of C
+//ADD r8, K
+// // update pointers by constants known outside of loop
+//ADD r10, K*r11
+//ADD r14, K
+//CMP r14, LIMIT
+//JNE LOOP
+//TILESTORED [rsi+rdi], tmm0 // update the C matrix in memory
+//TILESTORED [rsi+rdi+M], tmm1
+//} // end of outer loop
+//TILERELEASE
+//// return tiles to INIT state
+
 
   // 2. Load tiles of data
   // void _tile_loadd (__tile dst, const void * base, int stride);

@@ -22,5 +22,5 @@ else()
   message(FATAL_ERROR "Please upgrade your compiler to support SPR fetaures (GCC11+")
 endif()
 
-add_executable(test-amx ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp) 
+add_executable(test-amx ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)
 target_link_libraries(test-amx m )
