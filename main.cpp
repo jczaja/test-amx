@@ -22,6 +22,61 @@
 #include <string>
 #include <vector>
 #include <immintrin.h> // <-- to have AMX intrinsics
+// {
+// #ifdef _WIN32
+// 	#ifndef WIN32_LEAN_AND_MEAN
+// 		#define WIN32_LEAN_AND_MEAN
+// 	#endif
+// 	#include <windows.h>
+// 	#include <malloc.h>
+// 	#ifdef _MSC_VER
+// 		#define XBYAK_TLS __declspec(thread)
+// 	#else
+// 		#define XBYAK_TLS __thread
+// 	#endif
+// #elif defined(__GNUC__)
+// 	#include <unistd.h>
+// 	#include <sys/mman.h>
+// 	#include <stdlib.h>
+// 	#define XBYAK_TLS __thread
+// #endif
+// }
+namespace {
+#ifdef __linux__
+#include <unistd.h>
+#include <sys/syscall.h>
+
+#define XFEATURE_XTILECFG 17
+#define XFEATURE_XTILEDATA 18
+#define XFEATURE_MASK_XTILECFG (1 << XFEATURE_XTILECFG)
+#define XFEATURE_MASK_XTILEDATA (1 << XFEATURE_XTILEDATA)
+#define XFEATURE_MASK_XTILE (XFEATURE_MASK_XTILECFG | XFEATURE_MASK_XTILEDATA)
+#define ARCH_GET_XCOMP_PERM 0x1022
+#define ARCH_REQ_XCOMP_PERM 0x1023
+
+bool init() {
+    unsigned long bitmask = 0;
+    long status = syscall(SYS_arch_prctl, ARCH_GET_XCOMP_PERM, &bitmask);
+    if (0 != status) return false;
+    if (bitmask & XFEATURE_MASK_XTILEDATA) return true;
+
+    status = syscall(SYS_arch_prctl, ARCH_REQ_XCOMP_PERM, XFEATURE_XTILEDATA);
+    if (0 != status)
+        return false; // XFEATURE_XTILEDATA setup is failed, TMUL usage is not allowed
+    status = syscall(SYS_arch_prctl, ARCH_GET_XCOMP_PERM, &bitmask);
+
+    // XFEATURE_XTILEDATA setup is failed, can't use TMUL
+    if (0 != status || !(bitmask & XFEATURE_MASK_XTILEDATA)) return false;
+
+    // XFEATURE_XTILEDATA set successfully, TMUL usage is allowed
+    return true;
+}
+#else
+bool init() {
+    return true;
+}
+#endif
+}
 
 // Struct to configure memory layout
 //Byte(s)  Field Name                   Description
@@ -46,9 +101,9 @@ struct amx_memory_layout {
   unsigned char palette = 1;  // Leaving those value undefined makes Segmentation fault
   unsigned char start_row = 0;
   unsigned char reserved[14] = {0};
-  unsigned short tiles_bytes_per_row[8] = {64}; // Max availale ie.g. 64 bytes per tile's row
-  unsigned char reserved2[16] = {0};
-  unsigned char tiles_rows[8] = {16}; // Max availale ie.g. 16 rows per tile
+  unsigned short tiles_bytes_per_row[8] = {64, 64, 64}; // Max availale ie.g. 64 bytes per tile's row
+  unsigned short reserved2[8] = {0};
+  unsigned char tiles_rows[8] = {16, 16, 16}; // Max availale ie.g. 16 rows per tile
   unsigned char reserved3[8] = {0};
 };
 #pragma pack(0)
@@ -57,18 +112,47 @@ int main(int argc, char **argv) {
 
   printf("Hello AMX intrinsics!!\n");
 
+{
+    // experiment: use system call to enable AMX
+    puts("Using system call to enable AMX...");
+    if (!init()) return 1;
+    puts("...AMX is now enabled!");
+}
+
+{
+    // debug: check tile config memory
+    printf("sizeof(amx_memory_layout) = %zu\n", sizeof(amx_memory_layout));
+}
+
  // 1. make a configuration
  amx_memory_layout cfg;
- // configure tiles 
+
+ // load configure tiles 
  _tile_loadconfig(&cfg);
+
+{
+    // debug: inspect each byte of tile configuration
+    unsigned char x[64];
+    _tile_storeconfig(&x);
+    for (auto i = 0; i < 8; ++i) {
+        printf("%hhu", x[i * 8 + 0]);
+        for (auto j = 1; j < 8; ++j) {
+            printf(",%hhu", x[i * 8 + j]);
+        }
+        printf("\n");
+    }
+}
 
 //  _tile_loadd (tmm0, const void * base, int stride);
 
+    const int tile_index = 0;
+    printf("Calling tilezero on tmm%d...\n", tile_index);
   // Each tile is 64 bytes * 16 rows = 1024 bytes
   int8_t tile_buf[64*16*sizeof(int8_t)] = {2};
-  //_tile1024i tmm0;
-  _tile_zero(2);
-
+//   __tile tmm0;
+//    _tile_zero(tile_index); // crashes on gcc
+    _tile_zero(0);
+    puts("...success!");
 //  _tile_stored(0, tile_buf, /*stride*/ 1);
 
 
@@ -116,6 +200,6 @@ int main(int argc, char **argv) {
   // 4. Get data back
 
   // 5. Release the tiles configuration
+    puts("calling tile release...");
   _tile_release();
 }
-
