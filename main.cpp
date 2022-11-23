@@ -108,6 +108,25 @@ struct amx_memory_layout {
 };
 #pragma pack(0)
 
+void print_tile_buf(int8_t* tile_buf, size_t columns, size_t rows)
+{
+  printf("Printing tile(rows=%lu,cols=%lu):\n",rows,columns);
+  // Tile is upto 64 bytes a row and upto 16 lines
+  for (auto j=0; j< rows; ++j) {
+    for (auto i=0; i< columns; ++i) {
+      printf("%u ",tile_buf[columns*j+i]);
+    }
+    printf("\n");
+  }  
+}
+
+void fill_tile_buf_ones(int8_t* tile_buf, size_t columns, size_t rows)
+{
+   for(auto i=0; i<columns*rows;++i) {
+     tile_buf[i] = 1;
+   }
+}
+
 int main(int argc, char **argv) {
 
   printf("Hello AMX intrinsics!!\n");
@@ -148,14 +167,25 @@ int main(int argc, char **argv) {
     const int tile_index = 0;
     printf("Calling tilezero on tmm%d...\n", tile_index);
   // Each tile is 64 bytes * 16 rows = 1024 bytes
-  int8_t tile_buf[64*16*sizeof(int8_t)] = {2};
+  int8_t tile_buf[64*16*sizeof(int8_t)] = {0};
+  int8_t tile_buf2[64*16*sizeof(int8_t)] = {0};
+  int8_t tile_buf3[64*16*sizeof(int8_t)] = {0};
 //   __tile tmm0;
 //    _tile_zero(tile_index); // crashes on gcc
     _tile_zero(0);
     puts("...success!");
-//  _tile_stored(0, tile_buf, /*stride*/ 1);
+    _tile_stored(0, tile_buf, /*stride*/ 1);
+    print_tile_buf(tile_buf2,64,16); 
 
+    fill_tile_buf_ones(tile_buf2,64,16);
 
+//    print_tile_buf(tile_buf2,64,16); 
+
+   // TODO: load data from buf
+   // read back tile_data
+    _tile_stored(0, tile_buf2, /*stride*/ 1);
+    // Data read from tile 0
+    print_tile_buf(tile_buf2,64,16); 
 //LDTILECFG [rax]
 //// assume some outer loops driving the cache tiling (not shown)
 //{
