@@ -108,9 +108,9 @@ struct amx_memory_layout {
 };
 #pragma pack(0)
 
-void print_tile_buf(int8_t* tile_buf, size_t columns, size_t rows)
+void print_tile_buf(int8_t* tile_buf, size_t columns, size_t rows, const char* msg)
 {
-  printf("Printing tile(rows=%lu,cols=%lu):\n",rows,columns);
+  printf("%s(rows=%lu,cols=%lu):\n",msg,rows,columns);
   // Tile is upto 64 bytes a row and upto 16 lines
   for (auto j=0; j< rows; ++j) {
     for (auto i=0; i< columns; ++i) {
@@ -124,6 +124,20 @@ void fill_tile_buf_ones(int8_t* tile_buf, size_t columns, size_t rows)
 {
    for(auto i=0; i<columns*rows;++i) {
      tile_buf[i] = 1;
+   }
+}
+
+void fill_tile_buf_twos(int8_t* tile_buf, size_t columns, size_t rows)
+{
+   for(auto i=0; i<columns*rows;++i) {
+     tile_buf[i] = 2;
+   }
+}
+
+void fill_tile_buf_inc(int8_t* tile_buf, size_t columns, size_t rows)
+{
+   for(auto i=0; i<columns*rows;++i) {
+     tile_buf[i] = i%columns;
    }
 }
 
@@ -170,22 +184,31 @@ int main(int argc, char **argv) {
   int8_t tile_buf[64*16*sizeof(int8_t)] = {0};
   int8_t tile_buf2[64*16*sizeof(int8_t)] = {0};
   int8_t tile_buf3[64*16*sizeof(int8_t)] = {0};
-//   __tile tmm0;
-//    _tile_zero(tile_index); // crashes on gcc
-    _tile_zero(0);
-    puts("...success!");
-    _tile_stored(0, tile_buf, /*stride*/ 1);
-    print_tile_buf(tile_buf2,64,16); 
 
-    fill_tile_buf_ones(tile_buf2,64,16);
+  _tile_zero(0);
+  puts("...success!");
+  _tile_stored(0, tile_buf, /*stride*/ 1);
 
-//    print_tile_buf(tile_buf2,64,16); 
+  // Load data
+  fill_tile_buf_ones(tile_buf2,64,16);
+  fill_tile_buf_ones(tile_buf,64,16);
 
-   // TODO: load data from buf
-   // read back tile_data
-    _tile_stored(0, tile_buf2, /*stride*/ 1);
-    // Data read from tile 0
-    print_tile_buf(tile_buf2,64,16); 
+  _tile_loadd(1, tile_buf, /*stride*/ 64); // load data to tile. stride is bytes per line
+  _tile_loadd(2, tile_buf2, /*stride*/ 64); // load data to tile. stride is bytes per line
+                                            //
+  print_tile_buf(tile_buf,64,16,"TMM0");
+  print_tile_buf(tile_buf2,64,16,"TMM1");
+
+  // Make a dot product
+  // TODO: why result is like it is (how much columns is taken from tmm1 tile???) 
+  _tile_dpbuud(0, 1, 2); // intput args are uint8_t  but result is dword value
+
+  // read back tile_data
+  _tile_stored(0, tile_buf2, /*stride*/ 64);
+  print_tile_buf(tile_buf2,64,16,"Result: TMM0");
+
+
+
 //LDTILECFG [rax]
 //// assume some outer loops driving the cache tiling (not shown)
 //{
@@ -212,24 +235,9 @@ int main(int argc, char **argv) {
 //// return tiles to INIT state
 
 
-  // 2. Load tiles of data
-  // void _tile_loadd (__tile dst, const void * base, int stride);
-  // void _tile_zero (__tile tdest)
-  
   // __m128bh _mm_cvtne2ps_pbh (__m128 a, __m128 b); <-- conversion of fp32 data into bf16
 
 
-//AMX-TILE:ldtilecfg/sttilecfg/tileloadd/tileloaddt1/tilezero/tilerelease
-//AMX-INT8:tdpbssd/tdpbsud/tdpbusd/tdpbuud
-//AMX-BF16:tdpbf16ps
-  //auto y = _tile_dpbssd();
-  //auto tz = __tilezero();
-
-  // 3. Do dot product
-
-  // 4. Get data back
-
-  // 5. Release the tiles configuration
     puts("calling tile release...");
   _tile_release();
 }
