@@ -22,25 +22,7 @@
 #include <string>
 #include <vector>
 #include <immintrin.h> // <-- to have AMX intrinsics
-// {
-// #ifdef _WIN32
-// 	#ifndef WIN32_LEAN_AND_MEAN
-// 		#define WIN32_LEAN_AND_MEAN
-// 	#endif
-// 	#include <windows.h>
-// 	#include <malloc.h>
-// 	#ifdef _MSC_VER
-// 		#define XBYAK_TLS __declspec(thread)
-// 	#else
-// 		#define XBYAK_TLS __thread
-// 	#endif
-// #elif defined(__GNUC__)
-// 	#include <unistd.h>
-// 	#include <sys/mman.h>
-// 	#include <stdlib.h>
-// 	#define XBYAK_TLS __thread
-// #endif
-// }
+                       //
 namespace {
 #ifdef __linux__
 #include <unistd.h>
@@ -53,6 +35,13 @@ namespace {
 #define XFEATURE_MASK_XTILE (XFEATURE_MASK_XTILECFG | XFEATURE_MASK_XTILEDATA)
 #define ARCH_GET_XCOMP_PERM 0x1022
 #define ARCH_REQ_XCOMP_PERM 0x1023
+
+// As noted above, the kernel is able to control which processes are able to use the AMX instructions. The first step for a user-space process would be to use a new arch_prctl() command (ARCH_GET_XCOMP_SUPP) to get a list of supported features; if the appropriate bit is set in the result, AMX is available. Then, another arch_prctl() command (ARCH_REQ_XCOMP_PERM) can be used to request permission to use AMX. Some checks are made (one to be described shortly), and there is an opportunity for security modules to express an opinion as well. Normally, though, the request will be granted. Permissions apply to all threads in a process and are carried over a fork; calling execve() will reset them, though.
+
+//One challenge presented by AMX is that processors can create a great deal of internal state while the AMX instructions are running. If the CPU is interrupted in the middle of an operation, that state must be saved somewhere or a lot of work could be lost. So, if a process is using AMX, the kernel must be prepared to save up to about 10KB of data in its interrupt handlers before doing much of anything else. This saving is done using the XSAVE instruction.
+
+//The kernel allocates memory for each process that can be used for this purpose. Allocating 10KB for every process in the system would waste a lot of memory, though; most processes will never use AMX instructions. Happily, the processor can be configured to trap into the kernel the first time any process executes an AMX instruction; the kernel can then check whether permission to use those instructions has been granted and, if so, allocate an appropriately sized buffer to hold the FPU state and allow the operation to continue. 
+
 
 bool init() {
     unsigned long bitmask = 0;
@@ -96,19 +85,58 @@ bool init() {
 //55       tile7.rows                    Tile 7 rows.
 //56-63    reserved, must be zero
          
+
+//1,0,0,0,0,0,0,0
+//0,0,0,0,0,0,0,0
+//4,0,4,0,4,0,0,0
+//0,0,0,0,0,0,0,0
+//0,0,0,0,0,0,0,0
+//0,0,0,0,0,0,0,0
+//4,4,4,0,0,0,0,0
+//0,0,0,0,0,0,0,0
+
+// Working 
+// bytes_pre_row: 4,4,4  tiles_rows: 2,2,1
+// bytes_pre_row: 4,4,4  tiles_rows: 3,3,1
+
+// Not working
+// 2x1  : 2x4  * 4x1
+// 3x2  : 3x8  * 2x4
+#define t0_bytes_per_row 8   // N (4x due to dword)
+#define t1_bytes_per_row 8   // K
+#define t2_bytes_per_row 8   // 
+#define t0_rows 3 // M
+#define t1_rows 3 // M
+#define t2_rows 2 // 
+
+// Divide bytes per row values by four to get actual M,N,K
+
+
 #pragma pack(1)
 struct amx_memory_layout {
   unsigned char palette = 1;  // Leaving those value undefined makes Segmentation fault
   unsigned char start_row = 0;
   unsigned char reserved[14] = {0};
-  unsigned short tiles_bytes_per_row[8] = {64, 64, 64}; // Max availale ie.g. 64 bytes per tile's row
+  unsigned short tiles_bytes_per_row[8] = {t0_bytes_per_row, t1_bytes_per_row, t2_bytes_per_row}; // Max availale ie.g. 64 bytes per tile's row
   unsigned short reserved2[8] = {0};
-  unsigned char tiles_rows[8] = {16, 16, 16}; // Max availale ie.g. 16 rows per tile
+  unsigned char tiles_rows[8] = {t0_rows,t1_rows,t2_rows}; // Max availale ie.g. 16 rows per tile
   unsigned char reserved3[8] = {0};
 };
 #pragma pack(0)
 
-void print_tile_buf(int8_t* tile_buf, size_t columns, size_t rows, const char* msg)
+void print_tile_buf_d(unsigned int* tile_buf, size_t rows, size_t bytes_per_row, const char* msg)
+{
+  auto columns = bytes_per_row/4;
+  printf("%s(rows=%lu,cols=%lu):\n",msg,rows,columns);
+  // Tile is upto 64 bytes a row and upto 16 lines
+  for (unsigned int  j=0; j< rows; ++j) {
+    for (unsigned int i=0; i< columns; ++i) {
+      printf("%u ",tile_buf[columns*j+i]);
+    }
+    printf("\n");
+  }  
+}
+void print_tile_buf(int8_t* tile_buf, size_t rows, size_t columns, const char* msg)
 {
   printf("%s(rows=%lu,cols=%lu):\n",msg,rows,columns);
   // Tile is upto 64 bytes a row and upto 16 lines
@@ -120,24 +148,33 @@ void print_tile_buf(int8_t* tile_buf, size_t columns, size_t rows, const char* m
   }  
 }
 
-void fill_tile_buf_ones(int8_t* tile_buf, size_t columns, size_t rows)
+void fill_tile_buf_ones(int8_t* tile_buf, size_t rows, size_t columns)
 {
    for(auto i=0; i<columns*rows;++i) {
      tile_buf[i] = 1;
    }
 }
 
-void fill_tile_buf_twos(int8_t* tile_buf, size_t columns, size_t rows)
+void fill_tile_buf_twos(int8_t* tile_buf, size_t rows, size_t columns)
 {
    for(auto i=0; i<columns*rows;++i) {
      tile_buf[i] = 2;
    }
 }
 
-void fill_tile_buf_inc(int8_t* tile_buf, size_t columns, size_t rows)
+void fill_tile_buf_inc(int8_t* tile_buf, size_t rows, size_t columns)
 {
    for(auto i=0; i<columns*rows;++i) {
      tile_buf[i] = i%columns;
+   }
+}
+
+void fill_tile_buf_inc_row(int8_t* tile_buf, size_t rows, size_t columns)
+{
+   for(auto j=0; j<rows; ++j) {
+     for(auto i=0; i<columns;++i) {
+       tile_buf[j*columns+i] = j+1;
+     }
    }
 }
 
@@ -148,8 +185,11 @@ int main(int argc, char **argv) {
 {
     // experiment: use system call to enable AMX
     puts("Using system call to enable AMX...");
-    if (!init()) return 1;
-    puts("...AMX is now enabled!");
+    if (!init()) { 
+      printf("Error: AMX is not available\n");
+      return 1;
+    }
+    puts("...AMX is now enabled!\n");
 }
 
 {
@@ -176,10 +216,8 @@ int main(int argc, char **argv) {
     }
 }
 
-//  _tile_loadd (tmm0, const void * base, int stride);
-
-    const int tile_index = 0;
-    printf("Calling tilezero on tmm%d...\n", tile_index);
+  const int tile_index = 0;
+  printf("Calling tilezero on tmm%d...\n", tile_index);
   // Each tile is 64 bytes * 16 rows = 1024 bytes
   int8_t tile_buf[64*16*sizeof(int8_t)] = {0};
   int8_t tile_buf2[64*16*sizeof(int8_t)] = {0};
@@ -190,54 +228,23 @@ int main(int argc, char **argv) {
   _tile_stored(0, tile_buf, /*stride*/ 1);
 
   // Load data
-  fill_tile_buf_ones(tile_buf2,64,16);
-  fill_tile_buf_ones(tile_buf,64,16);
+  fill_tile_buf_inc(tile_buf,t1_rows,t1_bytes_per_row);
+  fill_tile_buf_inc(tile_buf2,t2_rows,t2_bytes_per_row);
 
-  _tile_loadd(1, tile_buf, /*stride*/ 64); // load data to tile. stride is bytes per line
-  _tile_loadd(2, tile_buf2, /*stride*/ 64); // load data to tile. stride is bytes per line
+  _tile_loadd(1, tile_buf, /*stride*/ t1_bytes_per_row); // load data to tile. stride is bytes per line
+  _tile_loadd(2, tile_buf2, /*stride*/ t2_bytes_per_row); // load data to tile. stride is bytes per line
                                             //
-  print_tile_buf(tile_buf,64,16,"TMM0");
-  print_tile_buf(tile_buf2,64,16,"TMM1");
+  print_tile_buf(tile_buf,t1_rows,t1_bytes_per_row,"TMM1");
+  print_tile_buf(tile_buf2,t2_rows,t2_bytes_per_row,"TMM2");
 
   // Make a dot product
   // TODO: why result is like it is (how much columns is taken from tmm1 tile???) 
   _tile_dpbuud(0, 1, 2); // intput args are uint8_t  but result is dword value
 
   // read back tile_data
-  _tile_stored(0, tile_buf2, /*stride*/ 64);
-  print_tile_buf(tile_buf2,64,16,"Result: TMM0");
+  _tile_stored(0, tile_buf2, /*stride*/ t0_bytes_per_row);
+  print_tile_buf_d(reinterpret_cast<unsigned int*>(tile_buf2),t0_rows,t0_bytes_per_row,"Result: TMM0");
 
-
-
-//LDTILECFG [rax]
-//// assume some outer loops driving the cache tiling (not shown)
-//{
-//TILELOADD tmm0, [rsi+rdi] // srcdst, RSI points to C, RDI is strided value
-//TILELOADD tmm1, [rsi+rdi+N] // second tile of C, unrolling in SIMD dimension N
-//MOV r14, 0
-//LOOP:
-//TILELOADD tmm2, [r8+r9]
-// // src2 is strided load of A, reused for 2 TMUL instr.
-//TILELOADD tmm3, [r10+r11] // src1 is strided load of B
-//TDPBUSD tmm0, tmm2, tmm3 // update left tile of C
-//TILELOADD tmm3, [r10+r11+N] // src1 loaded with B from next rightmost tile
-//TDPBUSD tmm1, tmm2, tmm3 // update right tile of C
-//ADD r8, K
-// // update pointers by constants known outside of loop
-//ADD r10, K*r11
-//ADD r14, K
-//CMP r14, LIMIT
-//JNE LOOP
-//TILESTORED [rsi+rdi], tmm0 // update the C matrix in memory
-//TILESTORED [rsi+rdi+M], tmm1
-//} // end of outer loop
-//TILERELEASE
-//// return tiles to INIT state
-
-
-  // __m128bh _mm_cvtne2ps_pbh (__m128 a, __m128 b); <-- conversion of fp32 data into bf16
-
-
-    puts("calling tile release...");
+  puts("calling tile release...");
   _tile_release();
 }
